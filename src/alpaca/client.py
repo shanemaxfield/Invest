@@ -281,7 +281,7 @@ class AlpacaClient:
 
             orders_data = []
             for order in orders:
-                orders_data.append({
+                order_dict = {
                     'id': str(order.id),
                     'symbol': order.symbol,
                     'qty': float(order.qty),
@@ -289,7 +289,19 @@ class AlpacaClient:
                     'type': order.type.value,
                     'status': order.status.value,
                     'submitted_at': str(order.submitted_at),
-                })
+                }
+                
+                # Add filled information if available
+                if hasattr(order, 'filled_at') and order.filled_at:
+                    order_dict['filled_at'] = str(order.filled_at)
+                if hasattr(order, 'filled_qty') and order.filled_qty:
+                    order_dict['filled_qty'] = float(order.filled_qty)
+                if hasattr(order, 'filled_avg_price') and order.filled_avg_price:
+                    order_dict['filled_avg_price'] = float(order.filled_avg_price)
+                elif hasattr(order, 'avg_fill_price') and order.avg_fill_price:
+                    order_dict['filled_avg_price'] = float(order.avg_fill_price)
+                
+                orders_data.append(order_dict)
 
             logger.info(f"Retrieved {len(orders_data)} orders (status: {status})")
             return orders_data

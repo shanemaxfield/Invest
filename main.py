@@ -15,6 +15,9 @@ from src.alpaca.portfolio_formatter import PortfolioFormatter
 from src.llm.trading_advisor import TradingAdvisor
 from src.utils.trade_executor import TradeExecutor
 from src.scheduler.trading_scheduler import TradingScheduler
+from src.utils.position_history import build_position_history
+from src.utils.template_formatter import format_portfolio_template
+from src.utils.notes_manager import load_notes, save_notes, update_notes
 
 logger = logging.getLogger(__name__)
 
@@ -87,27 +90,30 @@ class TradingBot:
             logger.info("Step 1: Fetching portfolio data from Alpaca...")
             account = self.alpaca_client.get_account()
             positions = self.alpaca_client.get_positions()
+            orders = self.alpaca_client.get_orders(status='all')
 
-            # Step 2: Format data for LLM
-            logger.info("Step 2: Formatting portfolio data...")
-            formatted_data = self.formatter.format_for_llm(account, positions)
+            # Step 2: Build position history and format template
+            logger.info("Step 2: Building position history and formatting template...")
+            positions_with_history = build_position_history(positions, orders)
+            notes = load_notes()
+            portfolio_template = format_portfolio_template(account, positions_with_history, notes)
 
             # Log portfolio summary
-            logger.info(f"Portfolio Value: ${formatted_data['account_summary']['total_portfolio_value']:,.2f}")
-            logger.info(f"Cash Available: ${formatted_data['account_summary']['cash_available']:,.2f}")
-            logger.info(f"Positions: {formatted_data['summary_statistics']['total_positions']}")
+            logger.info(f"Portfolio Value: ${account['portfolio_value']:,.2f}")
+            logger.info(f"Cash Available: ${account['cash']:,.2f}")
+            logger.info(f"Positions: {len(positions)}")
 
-            # Save formatted data to file for review
+            # Save template to file for review
             import json
             os.makedirs('logs', exist_ok=True)
-            with open('logs/latest_portfolio_data.json', 'w') as f:
-                json.dump(formatted_data, f, indent=2)
-            logger.info("Portfolio data saved to logs/latest_portfolio_data.json")
+            with open('logs/latest_portfolio_template.txt', 'w') as f:
+                f.write(portfolio_template)
+            logger.info("Portfolio template saved to logs/latest_portfolio_template.txt")
 
             # Step 3: Get LLM decisions
             if self.llm_advisor:
                 logger.info("Step 3: Requesting trading decisions from LLM...")
-                decisions = self.llm_advisor.get_trading_decisions(formatted_data)
+                decisions = self.llm_advisor.get_trading_decisions(portfolio_template)
 
                 # Validate decisions
                 self.llm_advisor.validate_decisions(decisions)
@@ -128,6 +134,17 @@ class TradingBot:
                 # Step 4: Execute trades
                 logger.info("Step 4: Executing trading decisions...")
                 execution_results = self.trade_executor.execute_decisions(decisions, account)
+
+                # Step 5: Update notes for positions that changed
+                logger.info("Step 5: Updating position notes...")
+                executed_actions = execution_results.get('executed', [])
+                notes_updates = self.llm_advisor.extract_notes_updates(decisions, executed_actions)
+                if notes_updates:
+                    updated_notes = update_notes(notes, notes_updates)
+                    save_notes(updated_notes)
+                    logger.info(f"Updated notes for {len(notes_updates)} positions")
+                else:
+                    logger.info("No notes updates needed (no positions changed)")
 
                 # Save execution results
                 with open('logs/latest_execution_results.json', 'w') as f:

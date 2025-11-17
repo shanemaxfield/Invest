@@ -1,8 +1,8 @@
 # Alpaca Trading API
-alpaca-py==0.25.2
+alpaca-py==0.43.2
 
 # LLM Integration (OpenAI as default, can swap for others)
-openai==1.12.0
+openai>=2.8.0
 
 # Scheduling
 schedule==1.2.0

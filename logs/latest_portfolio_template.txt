@@ -1,0 +1,27 @@
+Your Daily Check-in:
+This is day '1' of the competition. The portfolio started with $1000.00. It's currently trading at '$100018.36'. Below is an in depth look into your portfolio:
+
+OKLO
+History:
+- Bought '1' shares on '2025-11-14' for '$97.00'.
+Currently:
+- Hold '1' shares valued at '$97.57'.
+Previous Notes:
+Insert previous notes
+
+RGTI
+History:
+- Bought '1' shares on '2025-11-14' for '$24.03'.
+Currently:
+- Hold '1' shares valued at '$25.48'.
+Previous Notes:
+Insert previous notes
+
+TSLA
+History:
+- Bought '1' shares on '2025-11-14' for '$388.00'.
+Currently:
+- Hold '1' shares valued at '$404.35'.
+Previous Notes:
+Insert previous notes
+
