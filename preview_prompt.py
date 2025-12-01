@@ -11,7 +11,6 @@ from src.utils.logger import setup_logging
 from src.alpaca.client import AlpacaClient
 from src.utils.position_history import build_position_history
 from src.utils.template_formatter import format_portfolio_template
-from src.utils.notes_manager import load_notes
 from src.llm.trading_advisor import TradingAdvisor
 import logging
 
@@ -63,18 +62,11 @@ def main():
         print(f"✓ Built history for {len(positions_with_history)} positions")
         print()
         
-        # Load notes
-        print("Loading notes...")
-        notes = load_notes()
-        print(f"✓ Loaded notes for {len(notes)} positions")
-        print()
-        
         # Format template
         print("Formatting template...")
         portfolio_template = format_portfolio_template(
             account, 
-            positions_with_history, 
-            notes
+            positions_with_history
         )
         print("✓ Template formatted")
         print()
@@ -134,14 +126,6 @@ def main():
         print()
         print("✓ Template saved to logs/preview_prompt.txt")
         print("✓ Full prompt (system + user) saved to logs/preview_full_prompt.txt")
-        print()
-        
-        # Show summary
-        print("SUMMARY:")
-        print(f"  - Portfolio Value: ${account['portfolio_value']:,.2f}")
-        print(f"  - Positions: {len(positions)}")
-        print(f"  - Total Orders: {len(orders)}")
-        print(f"  - Notes: {len(notes)}")
         print()
         
     except Exception as e:
