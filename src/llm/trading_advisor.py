@@ -1,18 +1,20 @@
 """
-LLM Trading Advisor
-Integrates with OpenAI (or other LLMs) to make trading decisions
+LLM Trading Advisor - Layer 3 (Rewritten)
+Integrates with OpenAI with enhanced memory injection and constrained choices
 """
 
 import json
 import logging
 from typing import Dict, List, Optional
 from openai import OpenAI
+from src.utils.rules_engine import get_status_summary, calculate_days_held, calculate_days_remaining
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
 class TradingAdvisor:
-    """LLM-based trading advisor that analyzes portfolio and suggests trades"""
+    """LLM-based trading advisor with memory injection and pre-calculated options"""
 
     def __init__(self, api_key: str, model: str = "gpt-4-turbo-preview"):
         """
@@ -28,27 +30,36 @@ class TradingAdvisor:
 
     def get_trading_decisions(
         self,
-        portfolio_template: str,
-        custom_instructions: Optional[str] = None
+        context: Dict,
+        automatic_actions: List[Dict],
+        flagged_positions: List[str],
+        positions: List[Dict]
     ) -> Dict:
         """
         Analyze portfolio and get trading decisions from LLM
 
         Args:
-            portfolio_template: Formatted portfolio template string
-            custom_instructions: Optional custom instructions to add to the prompt
+            context: Pre-calculated decision context
+            automatic_actions: Automatic actions from rules engine
+            flagged_positions: Positions flagged for review
+            positions: Current positions data
 
         Returns:
-            Dict containing trading decisions and reasoning
+            Dict containing trading decisions
         """
         try:
             # Build the system prompt
             system_prompt = self._build_system_prompt()
 
-            # Build the user prompt with portfolio data
-            user_prompt = self._build_user_prompt(portfolio_template, custom_instructions)
+            # Build the user prompt with memory injection
+            user_prompt = self._build_user_prompt(
+                context,
+                automatic_actions,
+                flagged_positions,
+                positions
+            )
 
-            # Call the LLM (silently, output handled in main.py)
+            # Call the LLM
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -63,6 +74,8 @@ class TradingAdvisor:
             decision_text = response.choices[0].message.content
             decisions = json.loads(decision_text)
 
+            logger.info("Successfully received LLM trading decisions")
+
             return decisions
 
         except Exception as e:
@@ -71,6 +84,214 @@ class TradingAdvisor:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt for the LLM"""
+        return """You are an elite equity research analyst at a top-tier investment fund specializing in ultra-aggressive swing trading.
+
+CRITICAL RULES - READ CAREFULLY:
+
+1. MATH IS HANDLED FOR YOU - DO NOT CALCULATE ANYTHING
+   - All buy options are pre-calculated with exact dollar amounts
+   - All sell options are pre-calculated with exact share quantities
+   - You simply PICK from the provided options - no math needed
+
+2. YOU HAVE PERFECT MEMORY
+   - For EVERY position, you will see YOUR OWN original investment thesis
+   - You wrote the thesis when you bought the position
+   - Review your thesis and decide if it's still valid
+
+3. AUTOMATIC EXITS ALREADY HAPPENED
+   - Stop losses and target prices trigger automatically
+   - You will NOT see positions that already exited automatically
+   - Focus on reviewing remaining positions
+
+4. MINIMUM CASH DEPLOYMENT: 80%
+   - You MUST deploy at least 80% of available cash
+   - Choose DEPLOY_80_PERCENT or DEPLOY_ALL_CASH
+   - HOLD_CASH is NOT allowed
+   - Every dollar not invested is losing money
+
+RESPONSE FORMAT - YOU MUST FOLLOW THIS EXACTLY:
+
+{
+  "position_decisions": [
+    {
+      "symbol": "EXISTING_SYMBOL",
+      "action": "HOLD | TRIM_25 | TRIM_50 | SELL_ALL",
+      "reasoning": "Brief explanation based on your original thesis"
+    }
+  ],
+  "cash_deployment": {
+    "deployment_option": "DEPLOY_80_PERCENT | DEPLOY_ALL_CASH",
+    "new_positions": [
+      {
+        "symbol": "NEW_SYMBOL",
+        "allocation_percent": 50,
+        "investment_thesis": "2-3 sentences explaining the play",
+        "target_price": 150.00,
+        "stop_loss": 135.00,
+        "time_horizon_weeks": 4,
+        "target_exit_date": "2025-12-15",
+        "expected_catalyst": "Q4 earnings on 2025-12-15"
+      }
+    ]
+  }
+}
+
+DECISION PROCESS:
+
+1. Review each existing position:
+   - Read YOUR original thesis
+   - Check if thesis is still valid
+   - Choose: HOLD, TRIM_25, TRIM_50, or SELL_ALL
+
+2. Deploy available cash (MINIMUM 80%):
+   - Choose deployment option: DEPLOY_80_PERCENT or DEPLOY_ALL_CASH
+   - Identify new opportunities
+   - Allocate percentages (must sum to 100%)
+   - Provide complete thesis data for each new position
+
+3. Remember:
+   - You are in a competition to make the most money
+   - Be aggressive but strategic
+   - Deploy cash quickly - cash earns nothing
+   - Trust your original thesis unless fundamentals changed"""
+
+    def _build_user_prompt(
+        self,
+        context: Dict,
+        automatic_actions: List[Dict],
+        flagged_positions: List[str],
+        positions: List[Dict]
+    ) -> str:
+        """Build the user prompt with memory injection"""
+
+        account = context['account']
+        buy_options = context['buy_options']
+        position_options = context['position_options']
+        positions_data = context['positions_data']
+
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Build prompt header
+        prompt = f"""=== NIGHTLY PORTFOLIO CHECK-IN ===
+Date: {today}
+
+Portfolio Value: ${account['portfolio_value']:,.2f}
+Available Cash: ${account['available_cash']:,.2f}
+Buying Power: ${account['buying_power']:,.2f}
+
+"""
+
+        # Show automatic actions that already happened
+        if automatic_actions:
+            prompt += "=== AUTOMATIC EXITS (ALREADY EXECUTED) ===\n"
+            prompt += "These positions were automatically sold - you do NOT need to decide on them:\n\n"
+            for action in automatic_actions:
+                prompt += f"{action['symbol']}: {action['reason']}\n"
+            prompt += "\n"
+
+        # Show existing positions with memory injection
+        if positions_data:
+            prompt += "=== YOUR CURRENT POSITIONS ===\n"
+            prompt += "Review each position and decide: HOLD, TRIM_25, TRIM_50, or SELL_ALL\n\n"
+
+            for symbol, pos_data in positions_data.items():
+                current = pos_data['current']
+                notes = pos_data['notes']
+
+                market_value = current['market_value']
+                current_price = current['current_price']
+                qty = current['qty']
+
+                # Header
+                prompt += f"{symbol}: ${market_value:,.2f} ({int(qty)} shares @ ${current_price:.2f})\n"
+
+                # Show thesis data if available
+                if notes:
+                    entry_date = notes.get('entry_date', 'Unknown')
+                    entry_price = notes.get('entry_price', 0.0)
+                    thesis = notes.get('investment_thesis', 'No thesis')
+                    target = notes.get('target_price', 0.0)
+                    stop = notes.get('stop_loss', 0.0)
+                    time_horizon = notes.get('time_horizon_weeks', 0)
+                    target_exit = notes.get('target_exit_date', 'Unknown')
+                    catalyst = notes.get('expected_catalyst', 'Unknown')
+
+                    days_held = calculate_days_held(entry_date)
+                    days_remaining = calculate_days_remaining(target_exit)
+
+                    # Calculate P&L
+                    if entry_price > 0:
+                        pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                        pnl_sign = '+' if pnl_pct >= 0 else ''
+                    else:
+                        pnl_pct = 0
+                        pnl_sign = ''
+
+                    prompt += f"  Entry: ${entry_price:.2f} on {entry_date} ({days_held} days ago)\n"
+                    prompt += f"  P&L: {pnl_sign}{pnl_pct:.2f}%\n\n"
+                    prompt += f"  YOUR ORIGINAL INVESTMENT THESIS:\n"
+                    prompt += f"    \"{thesis}\"\n"
+                    prompt += f"    Target Price: ${target:.2f}\n"
+                    prompt += f"    Stop Loss: ${stop:.2f}\n"
+                    prompt += f"    Time Horizon: {time_horizon} weeks (exit by {target_exit})\n"
+                    prompt += f"    Expected Catalyst: {catalyst}\n"
+                    prompt += f"    Days Remaining: {days_remaining} days\n\n"
+
+                    # Status indicator
+                    position_obj = next((p for p in positions if p['symbol'] == symbol), None)
+                    if position_obj:
+                        status = get_status_summary(symbol, position_obj, notes, symbol in flagged_positions)
+                        prompt += f"  STATUS: {status}\n"
+                else:
+                    prompt += "  ⚠️ No thesis data available - position needs review\n"
+
+                # Show available options
+                if symbol in position_options:
+                    options = position_options[symbol]
+                    prompt += f"\n  YOUR OPTIONS:\n"
+                    prompt += f"    HOLD: {options['HOLD']['description']}\n"
+                    prompt += f"    TRIM_25: {options['TRIM_25']['description']}\n"
+                    prompt += f"    TRIM_50: {options['TRIM_50']['description']}\n"
+                    prompt += f"    SELL_ALL: {options['SELL_ALL']['description']}\n"
+
+                prompt += "\n" + "-" * 80 + "\n\n"
+
+        else:
+            prompt += "=== YOUR CURRENT POSITIONS ===\n"
+            prompt += "No current positions.\n\n"
+
+        # Show cash deployment options
+        prompt += "=== CASH DEPLOYMENT (REQUIRED: MINIMUM 80%) ===\n"
+        prompt += f"Available Cash: ${account['available_cash']:,.2f}\n\n"
+        prompt += "YOUR DEPLOYMENT OPTIONS (choose one):\n\n"
+
+        for option_name, option_data in buy_options.items():
+            # Skip options below 80%
+            if option_name in ['DEPLOY_25_PERCENT', 'DEPLOY_50_PERCENT', 'HOLD_CASH']:
+                continue
+            prompt += f"  {option_name}: {option_data['description']}\n"
+
+        prompt += "\n"
+        prompt += "CRITICAL INSTRUCTIONS:\n"
+        prompt += "1. For each existing position, choose: HOLD, TRIM_25, TRIM_50, or SELL_ALL\n"
+        prompt += "2. Select deployment option: DEPLOY_80_PERCENT or DEPLOY_ALL_CASH\n"
+        prompt += "3. Identify new positions to deploy the cash\n"
+        prompt += "4. Allocate percentages across new positions (must sum to 100%)\n"
+        prompt += "5. Provide COMPLETE thesis data for each new position:\n"
+        prompt += "   - symbol\n"
+        prompt += "   - allocation_percent\n"
+        prompt += "   - investment_thesis (2-3 sentences)\n"
+        prompt += "   - target_price\n"
+        prompt += "   - stop_loss (must be < target_price)\n"
+        prompt += "   - time_horizon_weeks (2-8 weeks)\n"
+        prompt += "   - target_exit_date (YYYY-MM-DD format)\n"
+        prompt += "   - expected_catalyst\n\n"
+        prompt += "Respond with JSON only. No additional text. Be aggressive and deploy capital wisely.\n"
+
+        return prompt
+
+    def _build_system_prompt_old(self) -> str:
+        """Old system prompt - kept for reference"""
         return """You are an elite equity research analyst at a top-tier investment fund specializing in ultra-aggressive swing trading. Your mandate is to identify high-conviction, undervalued opportunities primarily in small-cap ($300M-$2B market cap) and mid-cap ($2B-$10B market cap) stocks with exceptional growth potential.
 
 TRADING PHILOSOPHY:
@@ -112,7 +333,7 @@ CRITICAL POSITION MANAGEMENT RULES:
 DAILY CHECK-IN PROCESS - FOLLOW THIS ORDER EXACTLY:
 1. CHECK AVAILABLE CASH FIRST - This is your #1 priority. Look at "Available Cash" in the portfolio.
 2. IF CASH IS POSITIVE: You MUST create BUY actions that deploy 100% of that cash. Calculate how many shares you can buy and create the BUY action(s). Split across multiple positions if needed, but deploy ALL cash.
-3. IF CASH IS NEGATIVE: 
+3. IF CASH IS NEGATIVE:
    - Check "Buying Power" - if positive, you can use it to make BUY actions (using margin)
    - OR sell underperforming positions to free up cash, then immediately deploy that cash into new opportunities
    - NEVER return empty actions - you must either use buying power or sell positions
@@ -145,126 +366,3 @@ You MUST respond with valid JSON only, following the exact format specified belo
 
 COMPETITION CONTEXT:
 You are in an intense competition with other AI agents to make the most money. Every decision matters. Be bold, be decisive, but be strategic. Review your positions, identify opportunities, and execute with conviction. YOU MUST WIN."""
-
-    def _build_user_prompt(
-        self,
-        portfolio_template: str,
-        custom_instructions: Optional[str] = None
-    ) -> str:
-        """Build the user prompt with portfolio template"""
-
-        prompt = f"""{portfolio_template}
-
-"""
-
-        if custom_instructions:
-            prompt += f"""
-ADDITIONAL INSTRUCTIONS:
-{custom_instructions}
-
-"""
-
-        prompt += """
-CRITICAL INSTRUCTIONS FOR THIS CHECK-IN:
-
-STEP 1 - DEPLOY ALL CASH OR FREE UP CAPITAL (MANDATORY):
-Look at "Available Cash" above. 
-- IF CASH IS POSITIVE: You MUST deploy 100% of it. Calculate the exact dollar amount and create BUY actions that use ALL of it.
-  - If you have $50,000 cash, you MUST buy $50,000 worth of stocks
-  - Split across multiple positions if needed, but deploy EVERY DOLLAR
-- IF CASH IS NEGATIVE: You have two options:
-  1. Use "Buying Power" if it's positive to make BUY actions (using margin)
-  2. SELL underperforming positions to free up cash, then immediately deploy that cash into new opportunities
-- Your response MUST include actions - either BUY actions deploying cash/buying power, or SELL actions to free up capital followed by BUY actions
-- Empty actions arrays are NOT acceptable - you must take action to win the competition
-
-STEP 2 - Review Existing Positions:
-- Check entry dates - DO NOT sell positions bought within last 3 days unless thesis fundamentally broken
-- Evaluate P&L - hold winners, exit losers or positions that hit targets
-
-STEP 3 - Execute:
-Be aggressive. Deploy all cash. Make bold moves. Every dollar must work.
-"""
-
-        return prompt
-
-    def validate_decisions(self, decisions: Dict) -> bool:
-        """
-        Validate that the LLM decisions are in the correct format
-
-        Args:
-            decisions: The decisions dict from the LLM
-
-        Returns:
-            True if valid, raises exception if not
-        """
-        required_keys = ['actions']
-
-        for key in required_keys:
-            if key not in decisions:
-                raise ValueError(f"Missing required key in LLM response: {key}")
-
-        # Validate actions
-        if not isinstance(decisions['actions'], list):
-            raise ValueError("'actions' must be a list")
-
-        for i, action in enumerate(decisions['actions']):
-            # Required fields for API communication
-            required_action_keys = ['action_type', 'symbol']
-            for key in required_action_keys:
-                if key not in action:
-                    raise ValueError(f"Action {i} missing required key: {key}")
-
-            # Validate action type
-            if action['action_type'] not in ['BUY', 'SELL', 'HOLD', 'REBALANCE']:
-                raise ValueError(f"Invalid action_type: {action['action_type']}")
-
-            # Validate order type if present
-            if 'order_type' in action and action['order_type'] not in ['MARKET', 'LIMIT']:
-                raise ValueError(f"Invalid order_type: {action['order_type']}")
-
-            # Check for quantity on BUY/SELL actions
-            if action['action_type'] in ['BUY', 'SELL']:
-                if 'quantity' not in action or action['quantity'] <= 0:
-                    raise ValueError(f"Action {i} ({action['action_type']}) must have positive quantity")
-
-        logger.info("LLM decisions validated successfully")
-        return True
-    
-    def extract_notes_updates(self, decisions: Dict, actions_taken: List[Dict]) -> Dict[str, str]:
-        """
-        Extract notes updates from LLM decisions, only for positions that changed
-        
-        Args:
-            decisions: LLM decisions dict
-            actions_taken: List of actions that were actually executed
-        
-        Returns:
-            Dict mapping symbol to note text (only for changed positions)
-        """
-        notes_updates = {}
-        
-        # Get notes_updates from LLM response
-        llm_notes = decisions.get('notes_updates', {})
-        
-        # Only include notes for symbols where we actually took action
-        symbols_with_changes = set()
-        for action in actions_taken:
-            action_data = action.get('action', {})
-            if action_data.get('action_type') in ['BUY', 'SELL']:
-                symbols_with_changes.add(action_data.get('symbol'))
-        
-        # Filter notes to only include changed positions
-        for symbol, note in llm_notes.items():
-            if symbol in symbols_with_changes:
-                # Validate note length (max 3 sentences)
-                sentences = note.split('.')
-                if len(sentences) > 3:
-                    # Truncate to 3 sentences
-                    note = '. '.join(sentences[:3]) + '.'
-                notes_updates[symbol] = note.strip()
-        
-        if notes_updates:
-            logger.info(f"Extracted notes updates for {len(notes_updates)} positions")
-        
-        return notes_updates
