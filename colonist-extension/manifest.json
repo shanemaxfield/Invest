@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Colonist Game Tracker",
+  "version": "1.0.0",
+  "description": "Captures game data from colonist.io for analysis",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://colonist.io/*",
+    "https://*.colonist.io/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://colonist.io/*", "https://*.colonist.io/*"],
+      "js": ["scripts/inject.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "background": {
+    "service_worker": "scripts/background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["scripts/interceptor.js"],
+      "matches": ["https://colonist.io/*", "https://*.colonist.io/*"]
+    }
+  ]
+}
